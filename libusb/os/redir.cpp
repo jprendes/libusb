@@ -310,7 +310,7 @@ static void redir_hotplug_poll(struct libusb_context *ctx)
     while(1) {}
 }
 
-// extern "C" {
+extern "C" {
 const struct usbi_os_backend usbi_backend = {
     .name = "Redirect backend",
     .caps = 0,
@@ -322,4 +322,4 @@ const struct usbi_os_backend usbi_backend = {
     .device_priv_size = sizeof(struct redir_device_priv),
     .transfer_priv_size = sizeof(struct redir_transfer_priv)
 };
-// }
+}
