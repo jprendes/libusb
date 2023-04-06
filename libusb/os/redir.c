@@ -16,9 +16,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "libusbi.h"
+
+#ifdef __cplusplus
+}
+#endif
+
 #include "libusb_redir.hpp"
-#include "version.h"
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -309,7 +317,7 @@ static void redir_hotplug_poll(struct libusb_context *ctx)
     while(1) {}
 }
 
-extern "C" {
+// extern "C" {
 const struct usbi_os_backend usbi_backend = {
     .name = "Redirect backend",
     .caps = 0,
@@ -321,4 +329,4 @@ const struct usbi_os_backend usbi_backend = {
     .device_priv_size = sizeof(struct redir_device_priv),
     .transfer_priv_size = sizeof(struct redir_transfer_priv)
 };
-}
+// }

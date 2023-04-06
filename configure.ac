@@ -409,6 +409,7 @@ AM_CONDITIONAL([OS_EMSCRIPTEN], [test "x$backend" = xemscripten])
 AM_CONDITIONAL([PLATFORM_POSIX], [test "x$platform" = xposix])
 AM_CONDITIONAL([PLATFORM_WINDOWS], [test "x$platform" = xwindows])
 AM_CONDITIONAL([USE_UDEV], [test "x$use_udev" = xyes])
+AM_CONDITIONAL([OS_REDIR], [test "x$backend" = xredir])
 
 dnl The -Wcast-function-type warning causes a flurry of warnings when compiling
 dnl Windows with GCC 8 or later because of dynamically loaded functions
