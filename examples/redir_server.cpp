@@ -33,7 +33,7 @@
 #include <getopt.h>
 
 #include "libusb.h"
-#include "libusb_redir.h"
+#include "libusb_redir.hpp"
 
 #define dbg(...) fprintf(stderr, "debug: " __VA_ARGS__)
 #define err(...) fprintf(stderr, "error: " __VA_ARGS__)

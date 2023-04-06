@@ -17,7 +17,7 @@
  */
 
 #include "libusbi.h"
-#include "libusb_redir.h"
+#include "libusb_redir.hpp"
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -55,7 +55,7 @@ static void init_device_priv(struct redir_device_priv *priv)
 
 static int write_or_die(int socket, const void *buf, size_t size)
 {
-    const char *ptr = buf;
+    const char *ptr = static_cast<const char *>(buf);
     while(size > 0)
     {
         int cnt = write(socket, ptr, size);
@@ -71,7 +71,7 @@ static int write_or_die(int socket, const void *buf, size_t size)
 
 static int read_or_die(int socket, void *buf, size_t size)
 {
-    char *ptr = buf;
+    char *ptr = static_cast<char *>(buf);
     while(size > 0)
     {
         int cnt = read(socket, ptr, size);
@@ -92,7 +92,7 @@ static int send_packet(struct libusb_context *ctx,
                        const void *packet, size_t length)
 {
     usbi_dbg(ctx, "sending packet type %lu, length %lu", (unsigned long)type, (unsigned long)length);
-    struct redir_context_priv *priv = usbi_get_context_priv(ctx);
+    struct redir_context_priv *priv = static_cast<struct redir_context_priv *>(usbi_get_context_priv(ctx));
     struct libusb_redir_packet_header hdr;
     hdr.type = type;
     hdr.length = length; /* truncate, check length */
@@ -114,7 +114,7 @@ static int wait_packet(struct libusb_context *ctx,
                        void **packet, size_t *inout_length)
 {
     usbi_dbg(ctx, "wait for packet type %lu", (unsigned long)expected_type);
-    struct redir_context_priv *priv = usbi_get_context_priv(ctx);
+    struct redir_context_priv *priv = static_cast<struct redir_context_priv *>(usbi_get_context_priv(ctx));
     struct libusb_redir_packet_header hdr;
 
     while(true)
@@ -195,7 +195,7 @@ static int connect_unix_socket(struct libusb_context *ctx, const char *name)
 
 static int redir_init(struct libusb_context *ctx)
 {
-    struct redir_context_priv *priv = usbi_get_context_priv(ctx);
+    struct redir_context_priv *priv = static_cast<struct redir_context_priv *>(usbi_get_context_priv(ctx));
     usbi_dbg(ctx, "init redir");
     priv->socket = connect_unix_socket(ctx, "@libusb_redir");
     usbi_dbg(ctx, "  socket: %d\n", priv->socket);
@@ -238,7 +238,7 @@ redir_get_device_list(struct libusb_context * ctx,
     /* receive list */
     struct libusb_redir_packet_dev_list *dev_list = NULL;
     size_t dev_list_len;
-    err = wait_packet(ctx, LIBUSB_REDIR_DEVICE_LIST, &dev_list, &dev_list_len);
+    err = wait_packet(ctx, LIBUSB_REDIR_DEVICE_LIST, (void **)(&dev_list), &dev_list_len);
     if(err < 0)
         return err;
     /* TODO proper check on length */
@@ -260,7 +260,7 @@ redir_get_device_list(struct libusb_context * ctx,
         if(dev == NULL)
         {
             dev = usbi_alloc_device(ctx, session_id);
-            struct redir_device_priv *dev_priv = usbi_get_device_priv(dev);
+            struct redir_device_priv *dev_priv = static_cast<struct redir_device_priv *>(usbi_get_device_priv(dev));
             init_device_priv(dev_priv);
             dev_priv->device_id = dev_list->device[i].device_id;
             dev->bus_number = dev_list->device[i].bus_number;
@@ -282,7 +282,7 @@ redir_get_device_list(struct libusb_context * ctx,
             struct libusb_redir_packet_dev_desc dev_desc;
             size_t dev_desc_len = sizeof(dev_desc);
             struct libusb_redir_packet_dev_desc *dev_desc_ptr = &dev_desc;
-            err = wait_packet(ctx, LIBUSB_REDIR_DEVICE_DESCRIPTOR, &dev_desc_ptr, &dev_desc_len);
+            err = wait_packet(ctx, LIBUSB_REDIR_DEVICE_DESCRIPTOR, (void**)&dev_desc_ptr, &dev_desc_len);
             if(err < 0 || dev_desc_len != sizeof(dev_desc) || dev_desc.device_id != dev_priv->device_id)
             {
                 libusb_unref_device(dev);
@@ -336,7 +336,7 @@ static int
 redir_get_config_descriptor(struct libusb_device *dev, uint8_t idx,
     void *buf, size_t len)
 {
-    struct redir_device_priv *dev_priv = usbi_get_device_priv(dev);
+    struct redir_device_priv *dev_priv = static_cast<struct redir_device_priv *>(usbi_get_device_priv(dev));
     usbi_dbg(dev->ctx, "get config descriptor %x for device id %lx", (unsigned)idx, (unsigned long)dev_priv->device_id);
     /* this should really be cached but we don't at the moment */
     struct libusb_redir_packet_get_config_desc req;
@@ -350,7 +350,7 @@ redir_get_config_descriptor(struct libusb_device *dev, uint8_t idx,
     }
     size_t config_desc_sz = 0;
     struct libusb_redir_packet_config_desc *config_desc_ptr = NULL;
-    err = wait_packet(dev->ctx, LIBUSB_REDIR_CONFIG_DESCRIPTOR, &config_desc_ptr, &config_desc_sz);
+    err = wait_packet(dev->ctx, LIBUSB_REDIR_CONFIG_DESCRIPTOR, (void**)&config_desc_ptr, &config_desc_sz);
     if(err < 0 || config_desc_ptr->device_id != dev_priv->device_id)
         return err;
     usbi_dbg(dev->ctx, "got config descriptor\n");
@@ -362,7 +362,7 @@ redir_get_config_descriptor(struct libusb_device *dev, uint8_t idx,
 static int
 redir_open(struct libusb_device_handle *handle)
 {
-    struct redir_device_priv *dev_priv = usbi_get_device_priv(handle->dev);
+    struct redir_device_priv *dev_priv = static_cast<struct redir_device_priv *>(usbi_get_device_priv(handle->dev));
     usbi_dbg(handle->dev->ctx, "open device id %lx", (unsigned long)dev_priv->device_id);
     struct libusb_redir_packet_open_close req;
     req.device_id = dev_priv->device_id;
@@ -375,7 +375,7 @@ redir_open(struct libusb_device_handle *handle)
     struct libusb_redir_packet_open_status status;
     size_t status_size = sizeof(status);
     struct libusb_redir_packet_open_status *status_ptr = &status;
-    err = wait_packet(handle->dev->ctx, LIBUSB_REDIR_OPEN_STATUS, &status_ptr, &status_size);
+    err = wait_packet(handle->dev->ctx, LIBUSB_REDIR_OPEN_STATUS, (void**)&status_ptr, &status_size);
     if(err < 0 || status_size != sizeof(status) || status.device_id != dev_priv->device_id)
         return err;
     usbi_dbg(handle->dev->ctx, "device open status: %d\n", status.status);
@@ -385,7 +385,7 @@ redir_open(struct libusb_device_handle *handle)
 static void
 redir_close(struct libusb_device_handle *handle)
 {
-    struct redir_device_priv *dev_priv = usbi_get_device_priv(handle->dev);
+    struct redir_device_priv *dev_priv = static_cast<struct redir_device_priv *>(usbi_get_device_priv(handle->dev));
     usbi_dbg(handle->dev->ctx, "close device id %lx", (unsigned long)dev_priv->device_id);
     struct libusb_redir_packet_open_close req;
     req.device_id = dev_priv->device_id;
@@ -393,9 +393,7 @@ redir_close(struct libusb_device_handle *handle)
     if(err < 0)
     {
         usbi_err(handle->dev->ctx, "cannot close device\n");
-        return err;
     }
-    return LIBUSB_SUCCESS;
 }
 
 static int
@@ -438,9 +436,9 @@ static int
 redir_submit_transfer(struct usbi_transfer *itransfer)
 {
     libusb_context *ctx = ITRANSFER_CTX(itransfer);
-    struct redir_device_priv *dev_priv = usbi_get_device_priv(itransfer->dev);
+    struct redir_device_priv *dev_priv = static_cast<struct redir_device_priv *>(usbi_get_device_priv(itransfer->dev));
     struct libusb_transfer *transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
-    struct redir_transfer_priv *xfer_priv = usbi_get_transfer_priv(itransfer);
+    struct redir_transfer_priv *xfer_priv = static_cast<struct redir_transfer_priv *>(usbi_get_transfer_priv(itransfer));
 
     /* this code only works for control, bulk and interrupt */
     switch(transfer->type)
@@ -480,7 +478,7 @@ redir_submit_transfer(struct usbi_transfer *itransfer)
     else if(transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL)
         req_size += LIBUSB_CONTROL_SETUP_SIZE;
     /* allocate and fill request */
-    struct libusb_redir_packet_submit_transfer *req = malloc(req_size);
+    struct libusb_redir_packet_submit_transfer *req = static_cast<struct libusb_redir_packet_submit_transfer *>(malloc(req_size));
     req->device_id = dev_priv->device_id;
     req->transfer_id = xfer_priv->transfer_id;
     req->timeout = transfer->timeout;
@@ -504,7 +502,7 @@ redir_submit_transfer(struct usbi_transfer *itransfer)
     /* wait for result */
     struct libusb_redir_packet_transfer_status *status = NULL;
     size_t status_len;
-    err = wait_packet(ctx, LIBUSB_REDIR_TRANSFER_STATUS, &status, &status_len);
+    err = wait_packet(ctx, LIBUSB_REDIR_TRANSFER_STATUS, (void**)&status, &status_len);
     if(err < 0)
     {
         usbi_err(ctx, "cannot get transfer status\n");
@@ -525,7 +523,7 @@ redir_submit_transfer(struct usbi_transfer *itransfer)
         free(status);
         return LIBUSB_ERROR_OTHER;
     }
-    xfer_priv->status = status->status;
+    xfer_priv->status = libusb_transfer_status(status->status);
     usbi_dbg(ctx, "transfer status: %lu\n", status->status);
     itransfer->transferred = 0;
     if(status->status == LIBUSB_SUCCESS)
@@ -561,7 +559,7 @@ redir_cancel_transfer(struct usbi_transfer *itransfer)
 static int
 redir_handle_transfer_completion(struct usbi_transfer *itransfer)
 {
-    struct redir_transfer_priv *xfer_priv = usbi_get_transfer_priv(itransfer);
+    struct redir_transfer_priv *xfer_priv = static_cast<struct redir_transfer_priv *>(usbi_get_transfer_priv(itransfer));
     usbi_dbg(ITRANSFER_CTX(itransfer), "handle transfer completion: status=%lu\n", xfer_priv->status);
     return usbi_handle_transfer_completion(itransfer, xfer_priv->status);
 }
@@ -573,7 +571,7 @@ const struct usbi_os_backend usbi_backend = {
     .init = redir_init,
     .exit = redir_exit,
     .get_device_list = redir_get_device_list,
-    .open = redir_open,
+    .open = NULL,
     .close = redir_close,
     .get_active_config_descriptor = redir_get_active_config_descriptor,
     .get_config_descriptor = redir_get_config_descriptor,

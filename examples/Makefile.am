@@ -11,4 +11,4 @@ dpfp_threaded_SOURCES = dpfp.c
 
 fxload_SOURCES = ezusb.c ezusb.h fxload.c
 
-libusb_redirsrv_SOURCES = redir_server.c
+libusb_redirsrv_SOURCES = redir_server.cpp
