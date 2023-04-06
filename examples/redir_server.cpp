@@ -76,7 +76,7 @@ static struct device *get_device_by_ptr_or_new(libusb_device *dev)
         cur = cur->next;
     }
     /* could not find so allocate */
-    struct device *newdev = malloc(sizeof(struct device));
+    struct device *newdev = static_cast<struct device *>(malloc(sizeof(struct device)));
     fill_new_device(newdev, dev);
     newdev->next = g_dev_list_head;
     g_dev_list_head = newdev;
@@ -97,7 +97,7 @@ static struct device *get_device_by_id(uint32_t device_id)
 
 static int write_or_die(int socket, const void *buf, size_t size)
 {
-    const char *ptr = buf;
+    const char *ptr = static_cast<const char *>(buf);
     while(size > 0)
     {
         int cnt = write(socket, ptr, size);
@@ -113,7 +113,7 @@ static int write_or_die(int socket, const void *buf, size_t size)
 
 static int read_or_die(int socket, void *buf, size_t size)
 {
-    char *ptr = buf;
+    char *ptr = static_cast<char *>(buf);
     while(size > 0)
     {
         dbg("wait read\n");
@@ -170,7 +170,7 @@ static int wait_packet(int socket,
         return err;
     }
     dbg("  got packet data\n");
-    *out_type = hdr.type;
+    *out_type = libusb_redir_packet_type(hdr.type);
     *packet = payload;
     *out_length = hdr.length;
     return LIBUSB_SUCCESS;
@@ -216,7 +216,7 @@ static int send_device_list(int sock)
     /* allocate buffer */
     size_t dev_list_size = sizeof(struct libusb_redir_packet_dev_list);
     dev_list_size += cnt * sizeof(struct libusb_redir_packet_dev_list_entry);
-    struct libusb_redir_packet_dev_list *dev_list = malloc(dev_list_size);
+    struct libusb_redir_packet_dev_list *dev_list = static_cast<struct libusb_redir_packet_dev_list *>(malloc(dev_list_size));
     /* fill list */
     dev_list->nr_devices = cnt;
     for(int i = 0; i < cnt; i++)
@@ -305,7 +305,7 @@ static int send_config_descriptor(int sock, struct libusb_redir_packet_get_confi
     libusb_free_config_descriptor(desc);
     /* allocate */
     size_t tot_size = sizeof(struct libusb_redir_packet_config_desc) + desc_tot_len;
-    struct libusb_redir_packet_config_desc *config_desc = malloc(tot_size);
+    struct libusb_redir_packet_config_desc *config_desc = static_cast<struct libusb_redir_packet_config_desc *>(malloc(tot_size));
     config_desc->device_id = req->device_id;
     /* retrieve it */
     libusb_device_handle *handle;
@@ -316,7 +316,7 @@ static int send_config_descriptor(int sock, struct libusb_redir_packet_get_confi
         err("cannot open device\n");
         return err;
     }
-    err = libusb_get_descriptor(handle, LIBUSB_DT_CONFIG, req->config_index, (void *)config_desc->desc, desc_tot_len);
+    err = libusb_get_descriptor(handle, LIBUSB_DT_CONFIG, req->config_index, (unsigned char *)config_desc->desc, desc_tot_len);
     if(err < 0)
     {
         free(config_desc);
@@ -377,7 +377,7 @@ static int do_open_close(int sock, struct libusb_redir_packet_open_close *req, b
 /* ugly, will get rid of that when we do proper async i/o */
 static void LIBUSB_CALL redir_sync_transfer_cb(struct libusb_transfer *transfer)
 {
-    int *completed = transfer->user_data;
+    int *completed = static_cast<int*>(transfer->user_data);
     *completed = 1;
     dbg("transfer completed with status %d, actual_length=%d\n",
             transfer->status, transfer->actual_length);
@@ -386,7 +386,7 @@ static void LIBUSB_CALL redir_sync_transfer_cb(struct libusb_transfer *transfer)
 
 static void redir_sync_transfer_wait_for_completion(struct libusb_transfer *transfer)
 {
-    int *completed = transfer->user_data;
+    int *completed = static_cast<int*>(transfer->user_data);
     struct libusb_context *ctx = HANDLE_CTX(transfer->dev_handle);
 
     while(!*completed)
@@ -430,7 +430,7 @@ static int send_transfer_status_ok(int sock, struct libusb_redir_packet_submit_t
 {
     /* send back error */
     size_t tot_sz = sizeof(struct libusb_redir_packet_transfer_status) + transfer->actual_length;
-    struct libusb_redir_packet_transfer_status *status = malloc(tot_sz);
+    struct libusb_redir_packet_transfer_status *status = static_cast<struct libusb_redir_packet_transfer_status *>(malloc(tot_sz));
     status->device_id = xfer->device_id;
     status->transfer_id = xfer->transfer_id;
     status->status = LIBUSB_TRANSFER_COMPLETED;
@@ -483,7 +483,7 @@ static int submit_transfer(int sock, struct libusb_redir_packet_submit_transfer 
     transfer->endpoint = xfer->endpoint;
     transfer->type = xfer->type;
     transfer->length = xfer->length;
-    transfer->buffer = malloc(transfer->length);
+    transfer->buffer = static_cast<unsigned char *>(malloc(transfer->length));
     if(!is_in)
         memcpy(transfer->buffer, xfer + 1, transfer->length);
     else if(transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL)
@@ -541,7 +541,7 @@ static void serve_client(int sock)
                     dbg("dev desc request has wrong payload size, ignore\n");
                     free(payload);
                 }
-                send_device_descriptor(sock, payload);
+                send_device_descriptor(sock, static_cast<struct libusb_redir_packet_get_dev_desc *>(payload));
                 free(payload);
                 break;
             case LIBUSB_REDIR_REQUEST_CONFIG_DESCRIPTOR:
@@ -550,7 +550,7 @@ static void serve_client(int sock)
                     dbg("config desc request has wrong payload size, ignore\n");
                     free(payload);
                 }
-                send_config_descriptor(sock, payload);
+                send_config_descriptor(sock, static_cast<struct libusb_redir_packet_get_config_desc *>(payload));
                 free(payload);
                 break;
             case LIBUSB_REDIR_OPEN_DEVICE:
@@ -560,7 +560,7 @@ static void serve_client(int sock)
                     dbg("open/close request has wrong payload size, ignore\n");
                     free(payload);
                 }
-                do_open_close(sock, payload, type == LIBUSB_REDIR_OPEN_DEVICE);
+                do_open_close(sock, static_cast<struct libusb_redir_packet_open_close *>(payload), type == LIBUSB_REDIR_OPEN_DEVICE);
                 free(payload);
                 break;
             case LIBUSB_REDIR_SUBMIT_TRANSFER:
@@ -568,7 +568,7 @@ static void serve_client(int sock)
                 if(length < sizeof(struct libusb_redir_packet_submit_transfer))
                     dbg("submit_transfer request is too small ignore\n");
                 else
-                    submit_transfer(sock, payload, length);
+                    submit_transfer(sock, static_cast<struct libusb_redir_packet_submit_transfer *>(payload), length);
                 free(payload);
                 break;
             default:
