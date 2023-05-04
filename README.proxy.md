@@ -1,4 +1,23 @@
-# USB network redirection
+# USB network proxy
+
+## Build
+
+```bash
+CC=clang CXX=clang++ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+## Run the server
+
+```bash
+sudo LD_PRELOAD=/usr/lib/libusb-1.0.so ./build/libusb_proxy_server
+```
+
+## Run the client
+
+```bash
+LD_PRELOAD=./build/libusb-1.0.so lsusb -v
+```
 
 ## Introduction
 
