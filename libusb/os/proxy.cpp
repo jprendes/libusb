@@ -16,23 +16,21 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "asio/awaitable.hpp"
-#include "asio/co_spawn.hpp"
-#include "asio/detached.hpp"
-#include "asio/thread_pool.hpp"
 #include "libusb.h"
 #include "libusbi.h"
-#include "os/proxy.hpp"
+
 #include "proxy/proxy.hpp"
 #include "wirecall.hpp"
 
 #include <algorithm>
 #include <asm-generic/errno-base.h>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
@@ -98,14 +96,45 @@ struct proxy_transfer_priv : public priv_ptr<proxy_transfer_priv, usbi_transfer,
     libusb::proxy::proxy::transfer_result result;
 };
 
+asio::ip::tcp::endpoint proxy_get_server_endpoint(auto & io_context) {
+    auto host = std::getenv("LIBUSB_PROXY_HOST");
+    auto port = std::getenv("LIBUSB_PROXY_PORT");
+
+    asio::ip::tcp::resolver resolver{io_context};
+    auto resolution = resolver.resolve(
+        host ? host : "localhost",
+        port ? port : "5678",
+        asio::ip::tcp::resolver::numeric_service
+    );
+
+    if (resolution.empty()) {
+        throw std::runtime_error("can't resolve server hostname");
+    }
+
+    return *resolution.begin();
+}
+
 int proxy_init(libusb_context * ctx) {
     auto & priv = proxy_context_priv::init(ctx);
 
     priv.io_context = std::make_unique<asio::thread_pool>(2);
 
-    asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), 5678);
-    asio::ip::tcp::socket socket{*priv.io_context, ep.protocol()};
-    socket.connect(ep);
+    asio::ip::tcp::endpoint endpoint;
+    try {
+        endpoint = proxy_get_server_endpoint(*priv.io_context);
+    } catch (std::exception & ex) {
+        usbi_err(ctx, "resolve: %s", ex.what());
+        return LIBUSB_ERROR_NOT_FOUND;
+    }
+
+    asio::ip::tcp::socket socket{*priv.io_context, endpoint.protocol()};
+
+    try {
+        socket.connect(endpoint);
+    } catch (std::exception & ex) {
+        usbi_err(ctx, "connect: %s", ex.what());
+        return LIBUSB_ERROR_ACCESS;
+    }
 
     priv.client = std::make_unique<libusb::proxy::client>(std::move(socket));
 

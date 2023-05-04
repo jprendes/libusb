@@ -3,7 +3,14 @@
 ## Build
 
 ```bash
-CC=clang CXX=clang++ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+CC=clang CXX=clang++ cmake \
+    -S . \
+    -B build \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -Dlibusb_PROXY=ON \
+    -Dlibusb_BUILD_SHARED_LIBS=ON \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build
 ```
 

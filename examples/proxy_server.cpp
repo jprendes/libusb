@@ -17,55 +17,40 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-#include <cstdint>
-#include <exception>
-#include <functional>
-#include <stdexcept>
-#include <stdio.h>
-#include <string.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <string>
-#include <string_view>
-#include <unistd.h>
-#include <signal.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/un.h>
-#include <getopt.h>
-
-#include <thread>
-
-#include "asio/co_spawn.hpp"
-#include "asio/detached.hpp"
-#include "asio/post.hpp"
 #include "libusb.h"
+
 #include "os/proxy/server.hpp"
 
-#include <CLI/CLI.hpp>
-
 #include <asio.hpp>
-#include <utility>
+#include <CLI/CLI.hpp>
 #include <wirecall.hpp>
 
-asio::awaitable<void> listener(std::uint16_t port) {
-    auto executor = co_await asio::this_coro::executor;
+#include <exception>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <utility>
 
+asio::awaitable<void> listener(std::string address, uint16_t port) {
     try {
+        auto executor = co_await asio::this_coro::executor;
 
-        asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), 5678);
-        asio::ip::tcp::acceptor acceptor(executor, ep);
+        asio::ip::tcp::resolver resolver{executor};
+        auto resolution = co_await resolver.async_resolve(address, std::to_string(port), asio::ip::tcp::resolver::numeric_service | asio::ip::tcp::resolver::passive, asio::use_awaitable);
+
+        if (resolution.empty()) {
+            throw std::runtime_error("can't resolve " + address);
+        }
+
+        auto endpoint = *resolution.begin();
+
+        asio::ip::tcp::acceptor acceptor(executor, std::move(endpoint));
         for (;;) {
             asio::ip::tcp::socket socket = co_await acceptor.async_accept(asio::use_awaitable);
             co_spawn(executor, libusb::proxy::serve(std::move(socket)), asio::detached);
         }
-
-    } catch(std::exception & ex) {
-        std::cout << "Uncaught exception: " << ex.what() << "\n";
+    } catch (std::exception & ex) {
+        std::cerr << ex.what() << "\n";
     }
 }
 
@@ -73,29 +58,25 @@ int main(int argc, char **argv) {
     CLI::App app{"libusb proxy server"};
 
     std::uint16_t port = 5678;
+    std::string address = "127.0.0.1";
+
     app.add_option("-p,--port", port, "Port to listen");
+    app.add_option("-a,--address", address, "Bind address for listening");
 
     CLI11_PARSE(app, argc, argv);
 
     libusb_init(NULL);
 
     std::thread{[]{
-        int completed;
         while(true) {
-            libusb_handle_events_completed(NULL, &completed);
+            libusb_handle_events(NULL);
         }
     }}.detach();
 
-    try {
-        asio::thread_pool io_context(10);
+    asio::thread_pool io_context(10);
+    co_spawn(io_context, listener(std::move(address), port), asio::use_future).get();
+    io_context.stop();
+    io_context.join();
 
-        asio::signal_set signals(io_context, SIGINT, SIGTERM);
-        signals.async_wait([&](auto, auto){ io_context.stop(); });
-
-        co_spawn(io_context, listener(port), asio::detached);
-
-        io_context.join();
-    } catch (std::exception& e) {
-        std::printf("Exception: %s\n", e.what());
-    }
+    return 0;
 }

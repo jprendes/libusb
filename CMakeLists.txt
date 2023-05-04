@@ -183,7 +183,6 @@ if(libusb_PROXY)
 
         "${libusb_ROOT}/os/events_posix.h"
         "${libusb_ROOT}/os/threads_posix.h"
-        "${libusb_ROOT}/os/proxy.hpp"
     )
 
     add_executable(libusb_proxy_server
