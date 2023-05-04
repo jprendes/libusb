@@ -1,14 +1,12 @@
-project(usb-1.0 C)
 cmake_minimum_required(VERSION 3.10)
 
-set_target_properties(usb-1.0
-    PROPERTIES PREFIX "lib"
-)
+project(usb-1.0 C CXX)
 
 # This is because CMake on mingw can incorrectly use response files for includes
 # instead of passing them directly via -I<dir>
 # Explicitly disable use of response files
 set(CMAKE_C_USE_RESPONSE_FILE_FOR_INCLUDES   OFF)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CheckIncludeFiles)
 include(CheckFunctionExists)
@@ -16,6 +14,8 @@ include(CheckSymbolExists)
 include(CheckStructHasMember)
 include(CheckCCompilerFlag)
 include(CTest)
+
+add_compile_options("-fdiagnostics-color=always")
 
 check_function_exists(clock_gettime             HAVE_CLOCK_GETTIME)
 check_function_exists(pthread_condattr_setclock HAVE_PTHREAD_CONDATTR_SETCLOCK)
@@ -57,6 +57,11 @@ option(libusb_BUILD_SHARED_LIBS "Build Shared Libraries for libusb" ${libusb_BUI
 option(libusb_INSTALL_TARGETS "Install libusb targets" ON)
 option(libusb_BUILD_TESTING "Build Tests" ON)
 option(ENABLE_LOGGING "Enable Logging" ON)
+option(libusb_PROXY "Build libusb proxying" OFF)
+
+if(libusb_PROXY AND NOT UNIX)
+    message(FATAL_ERROR "libusb proxying is only supported on unix")
+endif()
 
 if(WIN32)
     set(PLATFORM_WINDOWS 1 CACHE INTERNAL "")
@@ -78,7 +83,7 @@ endif()
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gen_include")
 configure_file(config.h.in "${CMAKE_CURRENT_BINARY_DIR}/gen_include/config.h" @ONLY)
 
-set(libusb_ROOT ../libusb)
+set(libusb_ROOT ${CMAKE_CURRENT_LIST_DIR}/libusb)
 
 set(common_sources
     "${libusb_ROOT}/core.c"
@@ -101,6 +106,10 @@ if(libusb_BUILD_SHARED_LIBS)
 else()
     add_library(usb-1.0 STATIC ${common_sources})
 endif()
+
+set_target_properties(usb-1.0
+    PROPERTIES PREFIX "lib"
+)
 
 target_include_directories(usb-1.0 PUBLIC "${libusb_ROOT}")
 target_include_directories(usb-1.0 PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/gen_include")
@@ -128,7 +137,7 @@ if(WIN32)
     endif()
 endif()
 
-if(UNIX AND NOT ANDROID)
+if(UNIX AND NOT ANDROID AND NOT libusb_PROXY)
     target_sources(usb-1.0 PRIVATE
         "${libusb_ROOT}/os/events_posix.c"
         "${libusb_ROOT}/os/threads_posix.c"
@@ -141,6 +150,50 @@ if(UNIX AND NOT ANDROID)
     )
     target_link_libraries(usb-1.0 PUBLIC udev)
     target_compile_definitions(usb-1.0 PRIVATE HAVE_LIBUDEV=1)
+endif()
+
+if(libusb_PROXY)
+    include(ExternalProject)
+    include(FetchContent)
+
+    set(wirepump_TESTS OFF)
+
+    FetchContent_Declare(libwirecall
+        GIT_REPOSITORY https://github.com/jprendes/libwirecall.git
+        GIT_TAG        ece867452665271efc8580b2b7fe6144f13fd122
+    )
+    FetchContent_MakeAvailable(libwirecall)
+
+    FetchContent_Declare(cli11
+        GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+        GIT_TAG        v2.2.0
+    )
+    FetchContent_MakeAvailable(cli11)
+
+    FetchContent_Declare(fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        GIT_TAG        9.1.0
+    )
+    FetchContent_MakeAvailable(fmt)
+
+    target_sources(usb-1.0 PRIVATE
+        "${libusb_ROOT}/os/events_posix.c"
+        "${libusb_ROOT}/os/threads_posix.c"
+        "${libusb_ROOT}/os/proxy.cpp"
+
+        "${libusb_ROOT}/os/events_posix.h"
+        "${libusb_ROOT}/os/threads_posix.h"
+        "${libusb_ROOT}/os/proxy.hpp"
+    )
+
+    add_executable(libusb_proxy_server
+        examples/proxy_server.cpp
+    )
+    target_link_libraries(libusb_proxy_server PRIVATE usb-1.0 wirecall wirecall-asio CLI11 fmt)
+    target_link_libraries(usb-1.0 PRIVATE wirecall wirecall-asio fmt)
+
+    target_compile_features(libusb_proxy_server INTERFACE cxx_std_20)
+    set_property(TARGET libusb_proxy_server PROPERTY CXX_STANDARD 20)
 endif()
 
 if(ANDROID)

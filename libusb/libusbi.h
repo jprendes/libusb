@@ -103,7 +103,12 @@ typedef volatile LONG usbi_atomic_t;
 #define usbi_atomic_inc(a)	InterlockedIncrement((a))
 #define usbi_atomic_dec(a)	InterlockedDecrement((a))
 #else
+#ifdef __cplusplus
+#include <atomic>
+using atomic_long = std::atomic_long;
+#else
 #include <stdatomic.h>
+#endif
 typedef atomic_long usbi_atomic_t;
 #define usbi_atomic_load(a)	atomic_load((a))
 #define usbi_atomic_store(a, v)	atomic_store((a), (v))
@@ -907,7 +912,11 @@ struct usbi_os_backend {
 	const char *name;
 
 	/* Binary mask for backend specific capabilities */
+#ifdef __cplusplus
+	mutable
+#endif
 	uint32_t caps;
+
 
 	/* Perform initialization of your backend. You might use this function
 	 * to determine specific capabilities of the system, allocate required
