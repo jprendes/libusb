@@ -1,7 +1,7 @@
 #pragma once
 
 // native libusb header
-#include <libusb-1.0/libusb.h>
+#include "libusb.h"
 
 #include "proxy.hpp"
 #include "log.hpp"
@@ -33,10 +33,28 @@ struct impl : public proxy {
           , open_count(0)
           , handle(nullptr)
         {
+            if (!device) return;
             log::info("new device dev_id={}, bus={}, port={}, addr={}",
                 id, libusb_get_bus_number(device), libusb_get_port_number(device),
                 libusb_get_device_address(device)
             );
+        }
+
+        ~local_device() {
+            if (handle && open_count > 0) libusb_close(handle);
+            if (device) libusb_unref_device(device);
+        }
+
+        local_device() = default;
+        local_device(local_device const &) = delete;
+        local_device(local_device &) = delete;
+        local_device(local_device && other)
+          : local_device(0, nullptr)
+        {
+            std::swap(id, other.id);
+            std::swap(device, other.device);
+            std::swap(open_count, other.open_count);
+            std::swap(handle, other.handle);
         }
     };
 
@@ -45,6 +63,7 @@ struct impl : public proxy {
 
     /* return whether device exists or not */
     static auto & get_local_device(libusb_device * device) {
+        // TODO: this probably needs a mutex
         for (auto & [id, dev] : local_devices) {
             if (dev.device == device) return local_devices.at(id);
         }
@@ -54,6 +73,7 @@ struct impl : public proxy {
     }
 
     static auto & get_local_device(uint32_t id) {
+        // TODO: this probably needs a mutex
         if (!local_devices.contains(id)) {
             log::err("device id {} does not exist", id);
             throw libusb_error{LIBUSB_ERROR_NO_DEVICE};
@@ -349,6 +369,7 @@ struct impl : public proxy {
         if (dev.open_count++ == 0) {
             int err = libusb_open(dev.device, &dev.handle);
             if(err < 0) {
+                dev.open_count--;
                 log::err("cannot open device {}, err {}", device_id, err);
                 throw libusb_error{err};
             }
@@ -417,9 +438,6 @@ struct impl : public proxy {
             throw libusb_error{LIBUSB_TRANSFER_ERROR};
         }
 
-        /* see https://libusb.sourceforge.io/api-1.0/libusb_mtasync.html on the
-         * proper way of doing this, code stolen from the sync.c file */
-        //wait_for_completion(transfer);
         log::dbg("transfer submitted, waiting for completion");
         co_await completed.async_receive();
 

@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
         }
     }}.detach();
 
-    asio::thread_pool io_context(10);
+    asio::thread_pool io_context(1);
     co_spawn(io_context, listener(std::move(address), port), asio::use_future).get();
     io_context.stop();
     io_context.join();

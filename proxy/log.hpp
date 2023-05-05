@@ -11,7 +11,7 @@ namespace {
 
 inline int log_level() {
     static int log_level = [](){
-        auto var = std::getenv("LIBUSB_PROXY_DEBUG");
+        auto var = std::getenv("LIBUSB_PROXY_LOG_LEVEL");
         if (!var) return 0;
         try {
             return std::stoi(std::string(var));

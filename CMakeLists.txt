@@ -136,6 +136,8 @@ if(WIN32)
 endif()
 
 if(UNIX AND NOT ANDROID)
+    find_package(Threads REQUIRED)
+
     target_sources(usb-1.0 PRIVATE
         "${libusb_ROOT}/os/events_posix.c"
         "${libusb_ROOT}/os/threads_posix.c"
@@ -146,7 +148,7 @@ if(UNIX AND NOT ANDROID)
         "${libusb_ROOT}/os/threads_posix.h"
         "${libusb_ROOT}/os/linux_usbfs.h"
     )
-    target_link_libraries(usb-1.0 PUBLIC udev)
+    target_link_libraries(usb-1.0 PUBLIC udev Threads::Threads)
     target_compile_definitions(usb-1.0 PRIVATE HAVE_LIBUDEV=1)
 endif()
 

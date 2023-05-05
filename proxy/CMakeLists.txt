@@ -2,6 +2,8 @@ if(NOT UNIX)
     message(FATAL_ERROR "libusb proxying is only supported on unix")
 endif()
 
+find_package(Threads REQUIRED)
+
 include(cmake/wirecall.cmake)
 include(cmake/cli11.cmake)
 include(cmake/fmt.cmake)
@@ -15,7 +17,7 @@ target_include_directories(usb-1.0-proxy PUBLIC "${libusb_ROOT}")
 target_include_directories(usb-1.0-proxy PUBLIC "${libusb_BINARY_ROOT}/gen_include")
 target_include_directories(usb-1.0-proxy PRIVATE "${libusb_ROOT}/os")
 
-target_link_libraries(usb-1.0-proxy PRIVATE wirecall wirecall-asio fmt)
+target_link_libraries(usb-1.0-proxy PRIVATE wirecall wirecall-asio fmt Threads::Threads)
 
 target_sources(usb-1.0-proxy PRIVATE
     "${libusb_ROOT}/os/events_posix.c"
@@ -37,5 +39,5 @@ add_executable(server
     "${CMAKE_CURRENT_LIST_DIR}/log.hpp"
 )
 
-target_link_libraries(server PRIVATE wirecall wirecall-asio CLI11 fmt usb-1.0)
+target_link_libraries(server PRIVATE wirecall wirecall-asio CLI11 fmt usb-1.0 Threads::Threads)
 target_compile_features(server PRIVATE cxx_std_20)
