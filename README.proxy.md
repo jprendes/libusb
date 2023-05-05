@@ -7,23 +7,34 @@ CC=clang CXX=clang++ cmake \
     -S . \
     -B build \
     -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
     -Dlibusb_PROXY=ON \
-    -Dlibusb_BUILD_SHARED_LIBS=ON \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build
 ```
 
 ## Run the server
 
+Simply run
 ```bash
-sudo LD_PRELOAD=/usr/lib/libusb-1.0.so ./build/libusb_proxy_server
+sudo ./build/proxy/server
+```
+
+Use the `-a` and `-p` command line options to set the binding address and port to listent to, e.g.,
+```bash
+sudo ./build/proxy/server -p 1234 -a 0.0.0.0
 ```
 
 ## Run the client
 
+Preload the shared library when running an application that uses libusb:
 ```bash
-LD_PRELOAD=./build/libusb-1.0.so lsusb -v
+LD_PRELOAD=./build/proxy/libusb-1.0.so lsusb -v
+```
+
+Use the `LIBUSB_PROXY_HOST` and `LIBUSB_PROXY_PORT` environment variables to set the host and port to connecto to, e.g.,
+```bash
+LIBUSB_PROXY_HOST=localhost LIBUSB_PROXY_PORT=1234 LD_PRELOAD=./build/proxy/libusb-1.0.so lsusb -v
 ```
 
 ## Introduction
@@ -69,17 +80,3 @@ make -j3
 To test this, you need to run the server on one side and an application
 on the other side. For the following test, we will run both on the same machine
 and use LD_PRELOAD (unix only) to intercept the libusb calls.
-
-```bash
-# terminal 1
-# run server with a unix socket
-./examples/.libs/libusb_redirsrv -u @libusb_redir
-```
-
-```bash
-# terminal 2
-# run application with intercepted calls
-LD_PRELOAD=./libusb/.libs/libusb-1.0.so.0.3.0 lsusb -v
-# same with lots of debug information
-LIBUSB_DEBUG=5 LD_PRELOAD=./libusb/.libs/libusb-1.0.so.0.3.0 lsusb -v
-```

@@ -1,12 +1,10 @@
 #pragma once
 
-#include "asio/this_coro.hpp"
-#include "libusb.h"
-#include "libusbi.h"
+// native libusb header
+#include <libusb-1.0/libusb.h>
 
 #include "proxy.hpp"
 #include "log.hpp"
-#include "wirecall/async_channel.hpp"
 
 #include <sstream>
 #include <wirecall.hpp>
@@ -120,27 +118,46 @@ struct impl : public proxy {
         };
     }
 
-    auto raw_config_descriptor(libusb_device * device, libusb_config_descriptor * desc, uint8_t config_index) -> std::vector<uint8_t> {    
-        int desc_tot_len = desc->wTotalLength;
-
+    auto raw_config_descriptor(libusb_device * device, size_t length, uint8_t config_index) -> std::vector<uint8_t> {    
         libusb_device_handle *handle;
         auto err = libusb_open(device, &handle);
-        if(err < 0) {
-            return {};
-        }
+        if(err < 0) return {};
         
-        std::vector<uint8_t> raw(desc_tot_len);
+        std::vector<uint8_t> raw(length);
 
-        err = libusb_get_descriptor(handle, LIBUSB_DT_CONFIG, config_index, (uint8_t *)raw.data(), desc_tot_len);
-        if(err < 0) {
-            libusb_close(handle);
-            return {};
-        }
+        err = libusb_get_descriptor(handle, LIBUSB_DT_CONFIG, config_index, (uint8_t *)raw.data(), length);
+        libusb_close(handle);
 
+        if(err < 0) return {};
         return raw;
     }
 
-    auto active_config_descriptor(uint32_t device_id) -> config override {
+    auto config_descriptor_by_value(uint32_t device_id, uint8_t config_value) -> std::vector<uint8_t> {
+        auto & dev = get_local_device(device_id);
+        auto n_configs = device_descriptor(device_id).bNumConfigurations;
+
+        for (uint8_t index = 0; index < n_configs; ++index) {
+            libusb_config_descriptor * desc;
+            int err = libusb_get_config_descriptor(dev.device, index, &desc);
+            if(err != LIBUSB_SUCCESS) {
+                continue;
+            }
+
+            if (desc->bConfigurationValue != config_value) {
+                libusb_free_config_descriptor(desc);
+                continue;
+            }
+
+            size_t length = desc->wTotalLength;
+            libusb_free_config_descriptor(desc);
+
+            return raw_config_descriptor(dev.device, length, index);
+        }
+
+        throw libusb_error{LIBUSB_ERROR_NOT_FOUND};
+    }
+
+    auto active_config_descriptor(uint32_t device_id) -> std::vector<uint8_t> override {
         auto & dev = get_local_device(device_id);
 
         libusb_config_descriptor * desc;
@@ -150,22 +167,13 @@ struct impl : public proxy {
             throw libusb_error{err};
         }
 
-        auto value = desc->bConfigurationValue;
+        auto config_value = desc->bConfigurationValue;
         libusb_free_config_descriptor(desc);
 
-        auto device_desc = device_descriptor(device_id);
-
-        for (uint8_t i = 0; i < device_desc.bNumConfigurations; ++i) {
-            auto config = config_descriptor(device_id, i);
-            if (config.bConfigurationValue == value) {
-                return config;
-            }
-        }
-
-        throw libusb_error{LIBUSB_ERROR_NOT_FOUND};
+        return config_descriptor_by_value(device_id, config_value);
     }
 
-    auto config_descriptor(uint32_t device_id, uint8_t config_index) -> config override {
+    auto config_descriptor(uint32_t device_id, uint8_t config_index) -> std::vector<uint8_t> override {
         auto & dev = get_local_device(device_id);
 
         libusb_config_descriptor * desc;
@@ -175,53 +183,10 @@ struct impl : public proxy {
             throw libusb_error{err};
         }
 
-        auto config = config_descriptor_impl(desc);
-
-        config.raw = raw_config_descriptor(dev.device, desc, config_index);
-
+        size_t length = desc->wTotalLength;
         libusb_free_config_descriptor(desc);
 
-        return config;
-    }
-
-    auto config_descriptor_impl(libusb_config_descriptor const * desc) -> config {
-        libusb::proxy::proxy::config config{
-            .bConfigurationValue = desc->bConfigurationValue,
-            .iConfiguration = desc->iConfiguration,
-            .bmAttributes = desc->bmAttributes,
-            .bMaxPower = desc->MaxPower,
-        };
-
-        for (size_t i = 0; i < desc->bNumInterfaces; ++i) {
-            for (size_t j = 0; j < desc->interface[i].num_altsetting; ++j) {
-                auto & iface = desc->interface[i].altsetting[j];
-                libusb::proxy::proxy::interface interface{
-                    .bInterfaceNumber = iface.bInterfaceNumber,
-                    .bAlternateSetting = iface.bAlternateSetting,
-                    .bInterfaceClass = iface.bInterfaceClass,
-                    .bInterfaceSubClass = iface.bInterfaceSubClass,
-                    .bInterfaceProtocol = iface.bInterfaceProtocol,
-                    .iInterface = iface.iInterface,
-                };
-
-                for (size_t k = 0; k < iface.bNumEndpoints; ++k) {
-                    auto & ep = iface.endpoint[k];
-                    libusb::proxy::proxy::endpoint endpoint{
-                        .bEndpointAddress = ep.bEndpointAddress,
-                        .bmAttributes = ep.bmAttributes,
-                        .wMaxPacketSize = ep.wMaxPacketSize,
-                        .bInterval = ep.bInterval,
-                        .bRefresh = ep.bRefresh,
-                        .bSynchAddress = ep.bSynchAddress,
-                    };
-                    interface.endpoints.push_back(std::move(endpoint));
-                }
-
-                config.interfaces.push_back(std::move(interface));
-            }
-        }
-
-        return config;
+        return raw_config_descriptor(dev.device, length, config_index);
     }
 
     auto get_configuration(uint32_t device_id) -> uint8_t override {
@@ -464,29 +429,6 @@ struct impl : public proxy {
         std::vector<uint8_t> whole_buffer(transfer->length);
         memcpy(whole_buffer.data(), transfer->buffer, whole_buffer.size());
 
-        std::stringstream buffer_str;
-        for (auto c : buffer) {
-            char hex[] = "0123456789abcdef";
-            buffer_str << hex[(c & 0xf0) >> 4] << hex[c & 0x0f] << " ";
-        }
-        std::stringstream whole_buffer_str;
-        for (auto c : whole_buffer) {
-            char hex[] = "0123456789abcdef";
-            whole_buffer_str << hex[(c & 0xf0) >> 4] << hex[c & 0x0f] << " ";
-        }
-
-        log::dbg("transfer buffer is...       [{}]", buffer_str.str());
-        log::dbg("transfer whole buffer is... [{}]", whole_buffer_str.str());
-
-        /*
-        if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
-            auto status = transfer->status;
-            free(transfer->buffer);
-            libusb_free_transfer(transfer);
-            throw libusb_error{status};
-        }
-        */
-
         size_t skip = 0;
         if (type == LIBUSB_TRANSFER_TYPE_CONTROL) {
             skip = LIBUSB_CONTROL_SETUP_SIZE;
@@ -496,13 +438,6 @@ struct impl : public proxy {
 
         libusb_free_transfer(transfer);
         free(transfer->buffer);
-
-        std::stringstream data_str;
-        for (auto c : data) {
-            char hex[] = "0123456789abcdef";
-            data_str << hex[(c & 0xf0) >> 4] << hex[c & 0x0f] << " ";
-        }
-        log::dbg("transfer data is...         [{}]", data_str.str());
 
         co_return transfer_result{
             .status = transfer->status,

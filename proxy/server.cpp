@@ -17,9 +17,7 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-#include "libusb.h"
-
-#include "os/proxy/server.hpp"
+#include "server.hpp"
 
 #include <asio.hpp>
 #include <CLI/CLI.hpp>
@@ -58,7 +56,7 @@ int main(int argc, char **argv) {
     CLI::App app{"libusb proxy server"};
 
     std::uint16_t port = 5678;
-    std::string address = "127.0.0.1";
+    std::string address = "localhost";
 
     app.add_option("-p,--port", port, "Port to listen");
     app.add_option("-a,--address", address, "Bind address for listening");

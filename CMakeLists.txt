@@ -59,10 +59,6 @@ option(libusb_BUILD_TESTING "Build Tests" ON)
 option(ENABLE_LOGGING "Enable Logging" ON)
 option(libusb_PROXY "Build libusb proxying" OFF)
 
-if(libusb_PROXY AND NOT UNIX)
-    message(FATAL_ERROR "libusb proxying is only supported on unix")
-endif()
-
 if(WIN32)
     set(PLATFORM_WINDOWS 1 CACHE INTERNAL "")
 endif()
@@ -80,8 +76,10 @@ else()
     set(DEFAULT_VISIBILITY ""  CACHE INTERNAL "")
 endif()
 
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gen_include")
-configure_file(config.h.in "${CMAKE_CURRENT_BINARY_DIR}/gen_include/config.h" @ONLY)
+set(libusb_BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}")
+
+file(MAKE_DIRECTORY "${libusb_BINARY_ROOT}/gen_include")
+configure_file(config.h.in "${libusb_BINARY_ROOT}/gen_include/config.h" @ONLY)
 
 set(libusb_ROOT ${CMAKE_CURRENT_LIST_DIR}/libusb)
 
@@ -98,7 +96,7 @@ set(common_sources
     "${libusb_ROOT}/version_nano.h"
     "${libusb_ROOT}/version.h"
 
-    "${CMAKE_CURRENT_BINARY_DIR}/gen_include/config.h"
+    "${libusb_BINARY_ROOT}/gen_include/config.h"
 )
 
 if(libusb_BUILD_SHARED_LIBS)
@@ -112,7 +110,7 @@ set_target_properties(usb-1.0
 )
 
 target_include_directories(usb-1.0 PUBLIC "${libusb_ROOT}")
-target_include_directories(usb-1.0 PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/gen_include")
+target_include_directories(usb-1.0 PUBLIC "${libusb_BINARY_ROOT}/gen_include")
 target_include_directories(usb-1.0 PRIVATE "${libusb_ROOT}/os")
 
 if(WIN32)
@@ -137,7 +135,7 @@ if(WIN32)
     endif()
 endif()
 
-if(UNIX AND NOT ANDROID AND NOT libusb_PROXY)
+if(UNIX AND NOT ANDROID)
     target_sources(usb-1.0 PRIVATE
         "${libusb_ROOT}/os/events_posix.c"
         "${libusb_ROOT}/os/threads_posix.c"
@@ -153,46 +151,7 @@ if(UNIX AND NOT ANDROID AND NOT libusb_PROXY)
 endif()
 
 if(libusb_PROXY)
-    include(ExternalProject)
-    include(FetchContent)
-
-    set(wirepump_TESTS OFF)
-
-    FetchContent_Declare(libwirecall
-        GIT_REPOSITORY https://github.com/jprendes/libwirecall.git
-        GIT_TAG        ece867452665271efc8580b2b7fe6144f13fd122
-    )
-    FetchContent_MakeAvailable(libwirecall)
-
-    FetchContent_Declare(cli11
-        GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-        GIT_TAG        v2.2.0
-    )
-    FetchContent_MakeAvailable(cli11)
-
-    FetchContent_Declare(fmt
-        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-        GIT_TAG        9.1.0
-    )
-    FetchContent_MakeAvailable(fmt)
-
-    target_sources(usb-1.0 PRIVATE
-        "${libusb_ROOT}/os/events_posix.c"
-        "${libusb_ROOT}/os/threads_posix.c"
-        "${libusb_ROOT}/os/proxy.cpp"
-
-        "${libusb_ROOT}/os/events_posix.h"
-        "${libusb_ROOT}/os/threads_posix.h"
-    )
-
-    add_executable(libusb_proxy_server
-        examples/proxy_server.cpp
-    )
-    target_link_libraries(libusb_proxy_server PRIVATE usb-1.0 wirecall wirecall-asio CLI11 fmt)
-    target_link_libraries(usb-1.0 PRIVATE wirecall wirecall-asio fmt)
-
-    target_compile_features(libusb_proxy_server INTERFACE cxx_std_20)
-    set_property(TARGET libusb_proxy_server PROPERTY CXX_STANDARD 20)
+    add_subdirectory(proxy)
 endif()
 
 if(ANDROID)

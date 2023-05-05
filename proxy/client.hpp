@@ -1,13 +1,14 @@
 #pragma once
 
-#include "asio/awaitable.hpp"
-#include "asio/co_spawn.hpp"
-#include "asio/use_future.hpp"
 #include "libusb.h"
 #include "libusbi.h"
 
 #include "proxy.hpp"
 #include "log.hpp"
+
+#include <asio/awaitable.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/use_future.hpp>
 
 #include <concepts>
 #include <utility>
@@ -68,12 +69,12 @@ struct client : public proxy {
         return call_sync<descriptor>("device_descriptor", device_id);
     }
 
-    auto active_config_descriptor(uint32_t device_id) -> config override {
-        return call_sync<config>("active_config_descriptor", device_id);
+    auto active_config_descriptor(uint32_t device_id) -> std::vector<uint8_t> override {
+        return call_sync<std::vector<uint8_t>>("active_config_descriptor", device_id);
     }
 
-    auto config_descriptor(uint32_t device_id, uint8_t config_index) -> config override {
-        return call_sync<config>("config_descriptor", device_id, config_index);
+    auto config_descriptor(uint32_t device_id, uint8_t config_index) -> std::vector<uint8_t> override {
+        return call_sync<std::vector<uint8_t>>("config_descriptor", device_id, config_index);
     }
 
     auto get_configuration(uint32_t device_id) -> uint8_t override {

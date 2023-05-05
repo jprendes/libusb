@@ -16,11 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "client.hpp"
+
 #include "libusb.h"
 #include "libusbi.h"
-
-#include "proxy/proxy.hpp"
-#include "wirecall.hpp"
 
 #include <algorithm>
 #include <asm-generic/errno-base.h>
@@ -51,8 +50,6 @@
 
 #include <vector>
 #include <wirecall.hpp>
-
-#include "proxy/client.hpp"
 
 namespace {
 
@@ -96,9 +93,14 @@ struct proxy_transfer_priv : public priv_ptr<proxy_transfer_priv, usbi_transfer,
     libusb::proxy::proxy::transfer_result result;
 };
 
-asio::ip::tcp::endpoint proxy_get_server_endpoint(auto & io_context) {
-    auto host = std::getenv("LIBUSB_PROXY_HOST");
-    auto port = std::getenv("LIBUSB_PROXY_PORT");
+asio::ip::tcp::endpoint proxy_get_server_endpoint(libusb_context * ctx, auto & io_context) {
+    const char * host = std::getenv("LIBUSB_PROXY_HOST");
+    const char * port = std::getenv("LIBUSB_PROXY_PORT");
+
+    if (!host) host = "localhost";
+    if (!port) port = "5678";
+
+    usbi_err(ctx, "resolving: %s:%s", host, port);
 
     asio::ip::tcp::resolver resolver{io_context};
     auto resolution = resolver.resolve(
@@ -121,7 +123,7 @@ int proxy_init(libusb_context * ctx) {
 
     asio::ip::tcp::endpoint endpoint;
     try {
-        endpoint = proxy_get_server_endpoint(*priv.io_context);
+        endpoint = proxy_get_server_endpoint(ctx, *priv.io_context);
     } catch (std::exception & ex) {
         usbi_err(ctx, "resolve: %s", ex.what());
         return LIBUSB_ERROR_NOT_FOUND;
@@ -241,25 +243,21 @@ int proxy_get_device_list(libusb_context * ctx, discovered_devs **discdevs) {
     return LIBUSB_SUCCESS;
 }
 
-std::string serialize_config_descriptor(libusb::proxy::proxy::config const & config);
-
 int proxy_get_active_config_descriptor(libusb_device *dev, void *buf, size_t len) {
     auto & priv = proxy_context_priv::from(dev->ctx);
     auto & dev_priv = proxy_device_priv::from(dev);
     usbi_dbg(dev->ctx, "get config active descriptor for device id %lx", (unsigned long)dev_priv.id);
     
     /* this should really be cached but we don't at the moment */
-    libusb::proxy::proxy::config config;
+    std::vector<uint8_t> buffer;
     try {
-        config = priv->active_config_descriptor(dev_priv.id);
+        buffer = priv->active_config_descriptor(dev_priv.id);
     } catch (std::exception & ex) {
         usbi_err(dev->ctx, "cannot get config descriptor");
         return proxy_handle_host_exception(dev->ctx, ex);
     }
 
     usbi_dbg(dev->ctx, "got config descriptor\n");
-
-    auto buffer = serialize_config_descriptor(config);
 
     size_t copy_len = std::min(len, buffer.size());
     memcpy(buf, buffer.data(), copy_len);
@@ -272,9 +270,9 @@ int proxy_get_config_descriptor(libusb_device *dev, uint8_t idx, void *buf, size
     usbi_dbg(dev->ctx, "get config descriptor %x for device id %lx", (unsigned)idx, (unsigned long)dev_priv.id);
     
     /* this should really be cached but we don't at the moment */
-    libusb::proxy::proxy::config config;
+    std::vector<uint8_t> buffer;
     try {
-        config = priv->config_descriptor(dev_priv.id, idx);
+        buffer = priv->config_descriptor(dev_priv.id, idx);
     } catch (std::exception & ex) {
         usbi_err(dev->ctx, "cannot get config descriptor");
         return proxy_handle_host_exception(dev->ctx, ex);
@@ -282,63 +280,9 @@ int proxy_get_config_descriptor(libusb_device *dev, uint8_t idx, void *buf, size
 
     usbi_dbg(dev->ctx, "got config descriptor\n");
 
-    auto buffer = serialize_config_descriptor(config);
-
     size_t copy_len = std::min(len, buffer.size());
     memcpy(buf, buffer.data(), copy_len);
     return copy_len;
-}
-
-std::string serialize_config_descriptor(libusb::proxy::proxy::config const & config) {
-    if (config.raw.size() > 0) {
-        std::string serialized(config.raw.size(), '\0');
-        memcpy(serialized.data(), config.raw.data(), config.raw.size());
-        return serialized;
-    }
-
-    std::stringstream buffer;
-
-    auto insert = [&buffer]<typename T>(T const & value) {
-        buffer << std::string_view((char const *)(&value), value.bLength);
-    };
-
-    insert(usbi_configuration_descriptor{
-        .bLength = LIBUSB_DT_CONFIG_SIZE,
-        .bDescriptorType = LIBUSB_DT_CONFIG,
-        .wTotalLength = LIBUSB_DT_CONFIG_SIZE,
-        .bNumInterfaces = (uint8_t)config.interfaces.size(),
-        .bConfigurationValue = config.bConfigurationValue,
-        .iConfiguration = config.iConfiguration,
-        .bmAttributes = config.bmAttributes,
-        .bMaxPower = config.bMaxPower,
-    });
-
-    for (auto & interface : config.interfaces) {
-        insert(usbi_interface_descriptor{
-            .bLength = LIBUSB_DT_INTERFACE_SIZE,
-            .bDescriptorType = LIBUSB_DT_INTERFACE,
-            .bInterfaceNumber = interface.bInterfaceNumber,
-            .bAlternateSetting = interface.bAlternateSetting,
-            .bNumEndpoints = (uint8_t)interface.endpoints.size(),
-            .bInterfaceClass = interface.bInterfaceClass,
-            .bInterfaceSubClass = interface.bInterfaceSubClass,
-            .bInterfaceProtocol = interface.bInterfaceProtocol,
-            .iInterface = interface.iInterface,
-        });
-
-        for (auto & endpoint : interface.endpoints) {
-            insert(libusb_endpoint_descriptor{
-                .bLength = LIBUSB_DT_ENDPOINT_SIZE,
-                .bDescriptorType = LIBUSB_DT_ENDPOINT,
-                .bEndpointAddress = endpoint.bEndpointAddress,
-                .bmAttributes = endpoint.bmAttributes,
-                .wMaxPacketSize = endpoint.wMaxPacketSize,
-                .bInterval = endpoint.bInterval,
-            });
-        }
-    }
-
-    return std::move(buffer).str();
 }
 
 int proxy_open(libusb_device_handle *handle) {
@@ -590,22 +534,13 @@ int proxy_handle_transfer_completion(usbi_transfer *itransfer) {
     } else {
         memcpy(transfer->buffer + skip, result.data.data(), result.length);
         itransfer->transferred = result.length;
-
-        std::vector<uint8_t> whole_buffer(transfer->length);
-        memcpy(whole_buffer.data(), transfer->buffer, whole_buffer.size());
-        std::stringstream whole_buffer_str;
-        for (auto c : whole_buffer) {
-            char hex[] = "0123456789abcdef";
-            whole_buffer_str << hex[(c & 0xf0) >> 4] << hex[c & 0x0f] << " ";
-        }
-        usbi_dbg(ctx, "transfer whole buffer is... [%s]", whole_buffer_str.str().c_str());
     }
 
     if (result.status == LIBUSB_TRANSFER_STALL) {
         errno = EAGAIN;
     }
 
-    return usbi_handle_transfer_completion(itransfer, result.status);
+    return usbi_handle_transfer_completion(itransfer, (libusb_transfer_status)result.status);
 }
 
 void proxy_clear_transfer_priv(usbi_transfer *itransfer) {
@@ -675,7 +610,7 @@ usbi_os_backend const usbi_backend = {
     .close = proxy_close,
     .get_active_config_descriptor = proxy_get_active_config_descriptor,
     .get_config_descriptor = proxy_get_config_descriptor,
-    .get_config_descriptor_by_value = nullptr, // use default
+    .get_config_descriptor_by_value = nullptr,
     .get_configuration = proxy_get_configuration,
     .set_configuration = proxy_set_configuration,
     .claim_interface = proxy_claim_interface,
