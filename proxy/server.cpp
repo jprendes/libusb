@@ -17,6 +17,8 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
+#include "acceptor.hpp"
+#include "log.hpp"
 #include "server.hpp"
 
 #include <asio.hpp>
@@ -28,38 +30,60 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
-asio::awaitable<void> listener(std::string address, uint16_t port) {
+asio::awaitable<void> listener(libusb::proxy::endpoint endpoint) {
     try {
         auto executor = co_await asio::this_coro::executor;
-
-        asio::ip::tcp::resolver resolver{executor};
-        auto resolution = co_await resolver.async_resolve(address, std::to_string(port), asio::ip::tcp::resolver::numeric_service | asio::ip::tcp::resolver::passive, asio::use_awaitable);
-
-        if (resolution.empty()) {
-            throw std::runtime_error("can't resolve " + address);
-        }
-
-        auto endpoint = *resolution.begin();
-
-        asio::ip::tcp::acceptor acceptor(executor, std::move(endpoint));
+        libusb::proxy::acceptor acceptor{executor, endpoint};
         for (;;) {
-            asio::ip::tcp::socket socket = co_await acceptor.async_accept(asio::use_awaitable);
+            auto socket = co_await acceptor.accept();
             co_spawn(executor, libusb::proxy::serve(std::move(socket)), asio::detached);
         }
     } catch (std::exception & ex) {
-        std::cerr << ex.what() << "\n";
+        libusb::proxy::log::err("[{}] {}", endpoint.to_string(), ex.what());
+        throw;
     }
+}
+
+asio::awaitable<void> listener(std::vector<std::string> addresses) {
+    try {
+        auto executor = co_await asio::this_coro::executor;
+        std::vector<libusb::proxy::endpoint> endpoints;
+        for (auto & address : addresses) {
+            auto eps = co_await libusb::proxy::parse_uri(std::move(address));
+            for (auto & e : eps) {
+                endpoints.push_back(std::move(e));
+            }
+        }
+        std::vector<asio::awaitable<void>> servers;
+        for (auto & endpoint : endpoints) {
+            libusb::proxy::log::info("[{}] listening", endpoint.to_string());
+            servers.push_back(listener(std::move(endpoint)));
+        }
+        co_await libusb::proxy::wait_all({servers.begin(), servers.end()});
+    } catch (std::exception & ex) {
+        libusb::proxy::log::err("{}", ex.what());
+    }
+}
+
+asio::awaitable<void> signal_guard(asio::awaitable<void> guarded) {
+    std::array<asio::awaitable<void>, 2> awaitables{
+        std::move(guarded),
+        []() -> asio::awaitable<void> {
+            auto executor = co_await asio::this_coro::executor;
+            asio::signal_set signals(executor, SIGINT, SIGTERM);
+            co_await signals.async_wait(asio::use_awaitable);
+        }()
+    };
+    co_await libusb::proxy::wait_one(awaitables);
 }
 
 int main(int argc, char **argv) {
     CLI::App app{"libusb proxy server"};
 
-    std::uint16_t port = 5678;
-    std::string address = "localhost";
-
-    app.add_option("-p,--port", port, "Port to listen");
-    app.add_option("-a,--address", address, "Bind address for listening");
+    std::vector<std::string> addresses{"tcp://localhost:5678"};
+    app.add_option("-l,--listen", addresses, "Bind address for listening");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -72,7 +96,12 @@ int main(int argc, char **argv) {
     }}.detach();
 
     asio::thread_pool io_context(1);
-    co_spawn(io_context, listener(std::move(address), port), asio::use_future).get();
+
+    co_spawn(
+        io_context,
+        signal_guard(listener(std::move(addresses))),
+        asio::use_future
+    ).get();
     io_context.stop();
     io_context.join();
 

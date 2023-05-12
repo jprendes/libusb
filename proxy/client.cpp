@@ -16,39 +16,23 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "acceptor.hpp"
 #include "client.hpp"
 
 #include "libusb.h"
 #include "libusbi.h"
 
-#include <algorithm>
-#include <asm-generic/errno-base.h>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
+#include <errno.h>
+
 #include <exception>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
-#include <string>
 #include <string_view>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/un.h>
-#include <system_error>
-#include <thread>
-#include <unistd.h>
-#include <errno.h>
-#include <stdbool.h>
+#include <string>
+#include <utility>
 
 #include <asio.hpp>
-#include <unordered_map>
-#include <utility>
-#include <variant>
-#include <thread>
-#include <iostream>
 
-#include <vector>
 #include <wirecall.hpp>
 
 namespace {
@@ -116,31 +100,52 @@ asio::ip::tcp::endpoint proxy_get_server_endpoint(libusb_context * ctx, auto & i
     return *resolution.begin();
 }
 
-int proxy_init(libusb_context * ctx) {
-    auto & priv = proxy_context_priv::init(ctx);
+std::vector<std::string_view> split(std::string_view str, std::string_view delim) {
+    std::vector<std::string_view> tokens;
+    size_t prev = 0, pos = 0;
+    do {
+        pos = str.find(delim, prev);
+        if (pos == std::string_view::npos) pos = str.length();
+        auto token = str.substr(prev, pos-prev);
+        if (!token.empty()) tokens.push_back(token);
+        prev = pos + delim.length();
+    } while (pos < str.length() && prev < str.length());
+    return tokens;
+}
 
-    priv.io_context = std::make_unique<asio::thread_pool>(2);
+asio::awaitable<asio::generic::stream_protocol::socket> get_connected_socket(libusb_context * ctx) {
+    const char * host_env = std::getenv("LIBUSB_PROXY_HOST");
+    if (!host_env) host_env = "tcp://localhost:5678";
+    auto hosts = split(host_env, ";");
 
-    asio::ip::tcp::endpoint endpoint;
-    try {
-        endpoint = proxy_get_server_endpoint(ctx, *priv.io_context);
-    } catch (std::exception & ex) {
-        usbi_err(ctx, "resolve: %s", ex.what());
-        return LIBUSB_ERROR_NOT_FOUND;
+    for (auto host : hosts) {
+        auto endpoints = co_await libusb::proxy::parse_uri(std::string(host));
+        for (size_t i = 0; i < endpoints.size(); ++i) {
+            try {
+                co_return co_await libusb::proxy::connect(endpoints[i]);
+            } catch (std::exception & ex) {
+                auto ep = endpoints[i];
+                usbi_err(ctx, "failed to connect to endpoint %lu %s: %s", i, ep.to_string().c_str(), ex.what());
+                continue;
+            }
+        }
     }
+    throw std::runtime_error("failed to connect every endpoint");
+}
 
-    asio::ip::tcp::socket socket{*priv.io_context, endpoint.protocol()};
+asio::awaitable<int> proxy_async_init(libusb_context * ctx) {
+    auto & priv = proxy_context_priv::from(ctx);
 
     try {
-        socket.connect(endpoint);
+        auto socket = co_await get_connected_socket(ctx);
+        priv.client = std::make_unique<libusb::proxy::client>(std::move(socket));
+        priv->run(asio::detached);
     } catch (std::exception & ex) {
-        usbi_err(ctx, "connect: %s", ex.what());
-        return LIBUSB_ERROR_ACCESS;
+        usbi_err(ctx, "failed to connect to host: %s", ex.what());
+        co_return LIBUSB_ERROR_ACCESS;
+    } catch (...) {
+        co_return LIBUSB_ERROR_ACCESS;
     }
-
-    priv.client = std::make_unique<libusb::proxy::client>(std::move(socket));
-
-    priv->run(asio::detached);
 
     auto capabilities = priv->get_capabilities();
 
@@ -151,7 +156,14 @@ int proxy_init(libusb_context * ctx) {
         usbi_backend.caps |= USBI_CAP_SUPPORTS_DETACH_KERNEL_DRIVER;
     }
 
-    return LIBUSB_SUCCESS;
+    co_return LIBUSB_SUCCESS;
+}
+
+int proxy_init(libusb_context * ctx) {
+    auto & priv = proxy_context_priv::init(ctx);
+    priv.io_context = std::make_unique<asio::thread_pool>(2);
+
+    return asio::co_spawn(*priv.io_context, proxy_async_init(ctx), asio::use_future).get();
 }
 
 void proxy_exit(libusb_context *ctx) {

@@ -28,9 +28,9 @@ Simply run
 sudo ./build/proxy/server
 ```
 
-Use the `-a` and `-p` command line options to set the binding address and port to listent to, and the `LIBUSB_PROXY_LOG_LEVEL` environment variable (with values from `0` to `4`) to control the log level, e.g.,
+Use the `-l` command line option to set the listening address, and the `LIBUSB_PROXY_LOG_LEVEL` environment variable (with values from `0` to `4`) to control the log level, e.g.,
 ```bash
-sudo LIBUSB_PROXY_LOG_LEVEL=3 ./build/proxy/server -p 1234 -a 0.the 0.0.0
+sudo LIBUSB_PROXY_LOG_LEVEL=3 ./build/proxy/server -l tcp://localhost:1234 -l local:///tmp/libusb.socket
 ```
 
 ## Run the client
@@ -40,7 +40,7 @@ Preload the shared library when running an application that uses libusb:
 LD_PRELOAD=./build/proxy/libusb-1.0.so lsusb -v
 ```
 
-Use the `LIBUSB_PROXY_HOST` and `LIBUSB_PROXY_PORT` environment variables to set the host and port to connecto to, and `libusb`'s `LIBUSB_DEBUG` environment variable to control the log level, e.g.,
+Use the `LIBUSB_PROXY_HOST` environment variable to set the host to connecto to, and `libusb`'s `LIBUSB_DEBUG` environment variable to control the log level, e.g.,
 ```bash
-LIBUSB_PROXY_HOST=localhost LIBUSB_PROXY_PORT=1234 LD_PRELOAD=./build/proxy/libusb-1.0.so lsusb -v
+LIBUSB_PROXY_HOST="tcp://localhost:1234;local:///tmp/libusb.socket" LD_PRELOAD=./build/proxy/libusb-1.0.so lsusb -v
 ```
